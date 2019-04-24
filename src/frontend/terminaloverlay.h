@@ -40,6 +40,7 @@
 
 #include <vector>
 #include <limits.h>
+#include <stdio.h>
 
 namespace Overlay {
   using namespace Terminal;
