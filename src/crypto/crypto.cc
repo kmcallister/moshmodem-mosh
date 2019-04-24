@@ -159,7 +159,7 @@ Session::Session( Base64Key s_key )
   : key( s_key ), ctx_buf( ae_ctx_sizeof() ),
     ctx( (ae_ctx *)ctx_buf.data() ), blocks_encrypted( 0 ),
     plaintext_buffer( RECEIVE_MTU ),
-    ciphertext_buffer( RECEIVE_MTU ),
+    tag_buffer( TAG_LEN ),
     nonce_buffer( Nonce::NONCE_LEN )
 {
   if ( AE_SUCCESS != ae_init( ctx, key.data(), 16, 12, 16 ) ) {
@@ -200,21 +200,24 @@ Nonce::Nonce( const char *s_bytes, size_t len )
 const string Session::encrypt( const Message & plaintext )
 {
   const size_t pt_len = plaintext.text.size();
-  const int ciphertext_len = pt_len + 16;
-
-  assert( (size_t)ciphertext_len <= ciphertext_buffer.len() );
   assert( pt_len <= plaintext_buffer.len() );
 
   memcpy( plaintext_buffer.data(), plaintext.text.data(), pt_len );
   memcpy( nonce_buffer.data(), plaintext.nonce.data(), Nonce::NONCE_LEN );
 
-  if ( ciphertext_len != ae_encrypt( ctx,                                     /* ctx */
+  // WARNING WARNING WARNING
+  //
+  // This is the moshmodem branch!
+  //
+  // The plaintext is not encrypted, only authenticated.
+
+  if ( TAG_LEN != ae_encrypt( ctx,                                            /* ctx */
 				     nonce_buffer.data(),                     /* nonce */
-				     plaintext_buffer.data(),                 /* pt */
-				     pt_len,                                  /* pt_len */
-				     NULL,                                    /* ad */
-				     0,                                       /* ad_len */
-				     ciphertext_buffer.data(),                /* ct */
+				     NULL,                                    /* pt */
+				     0,                                       /* pt_len */
+				     plaintext_buffer.data(),                 /* ad */
+				     pt_len,                                  /* ad_len */
+				     tag_buffer.data(),                       /* ct */
 				     NULL,                                    /* tag */
 				     AE_FINALIZE ) ) {                        /* final */
     throw CryptoException( "ae_encrypt() returned error." );
@@ -242,9 +245,10 @@ const string Session::encrypt( const Message & plaintext )
     throw CryptoException( "Encrypted 2^47 blocks.", true );
   }
 
-  string text( ciphertext_buffer.data(), ciphertext_len );
+  string text( plaintext_buffer.data(), pt_len );
+  string tag( tag_buffer.data(), TAG_LEN );
 
-  return plaintext.nonce.cc_str() + text;
+  return plaintext.nonce.cc_str() + tag + text;
 }
 
 const Message Session::decrypt( const char *str, size_t len )
@@ -254,27 +258,33 @@ const Message Session::decrypt( const char *str, size_t len )
   }
 
   int body_len = len - 8;
-  int pt_len = body_len - 16;
+  int pt_len = body_len - TAG_LEN;
 
   if ( pt_len < 0 ) { /* super-assertion that pt_len does not equal AE_INVALID */
     fprintf( stderr, "BUG.\n" );
     exit( 1 );
   }
 
-  assert( (size_t)body_len <= ciphertext_buffer.len() );
-  assert( (size_t)pt_len <= plaintext_buffer.len() );
+  assert( (size_t)body_len <= plaintext_buffer.len() );
 
   Nonce nonce( str, 8 );
-  memcpy( ciphertext_buffer.data(), str + 8, body_len );
   memcpy( nonce_buffer.data(), nonce.data(), Nonce::NONCE_LEN );
+  memcpy( tag_buffer.data(), str + 8, TAG_LEN );
+  memcpy( plaintext_buffer.data(), str + 8 + TAG_LEN, pt_len );
 
-  if ( pt_len != ae_decrypt( ctx,                      /* ctx */
+  // WARNING WARNING WARNING
+  //
+  // This is the moshmodem branch!
+  //
+  // The plaintext is not encrypted, only authenticated.
+
+  if ( 0 != ae_decrypt( ctx,                           /* ctx */
 			     nonce_buffer.data(),      /* nonce */
-			     ciphertext_buffer.data(), /* ct */
-			     body_len,                 /* ct_len */
-			     NULL,                     /* ad */
-			     0,                        /* ad_len */
-			     plaintext_buffer.data(),  /* pt */
+			     tag_buffer.data(),        /* ct */
+			     TAG_LEN,                  /* ct_len */
+			     plaintext_buffer.data(),  /* ad */
+			     pt_len,                   /* ad_len */
+			     NULL,                     /* pt */
 			     NULL,                     /* tag */
 			     AE_FINALIZE ) ) {         /* final */
     throw CryptoException( "Packet failed integrity check." );

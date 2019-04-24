@@ -40,6 +40,7 @@
 #include <stdlib.h>
 #include <exception>
 
+static const int TAG_LEN = 16;
 
 long int myatoi( const char *str );
 
@@ -139,7 +140,7 @@ namespace Crypto {
     uint64_t blocks_encrypted;
 
     AlignedBuffer plaintext_buffer;
-    AlignedBuffer ciphertext_buffer;
+    AlignedBuffer tag_buffer;
     AlignedBuffer nonce_buffer;
     
   public:
